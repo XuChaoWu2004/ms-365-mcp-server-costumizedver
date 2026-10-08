@@ -107,7 +107,6 @@ const CREATE_TODO_TASK_ALLOWLIST = [
   'importance',
   'categories',
   'recurrence',
-  'checklistItems',
   'linkedResources',
 ];
 
@@ -190,12 +189,23 @@ describe('bodyFields allowlist enforcement for To Do create tools', () => {
     expect(result.isError).toBe(true);
   });
 
+  it('rejects checklistItems on create-todo-task (variant B: steps go through the dedicated tool)', async () => {
+    const { handler } = register();
+    const result = await handler('create-todo-task')({
+      todoTaskListId: 'L',
+      body: { title: 'x', checklistItems: [{ displayName: 's1' }] },
+    });
+    const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    expect(result.isError).toBe(true);
+    expect(parsed.disallowed).toEqual(['checklistItems']);
+    expect(mockGraphClient.graphRequest).not.toHaveBeenCalled();
+  });
+
   it('sends an allowed body unchanged', async () => {
     const { handler } = register();
     const body = {
       title: 'x',
       body: { contentType: 'text', content: 'n' },
-      checklistItems: [{ displayName: 's1' }],
     };
     await handler('create-todo-task')({ todoTaskListId: 'L', body });
     expect(mockGraphClient.graphRequest).toHaveBeenCalledTimes(1);

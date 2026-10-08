@@ -168,12 +168,32 @@ describe('endpoints.json validation', () => {
       'extensions',
       'status',
       'completedDateTime',
+      'checklistItems',
     ]) {
       expect(
         e?.bodyFields,
         `${forbidden} must not be in create-todo-task bodyFields`
       ).not.toContain(forbidden);
     }
+  });
+
+  it('documents the To Do create contract in llmTips', () => {
+    const task = endpoints.find((x) => x.toolName === 'create-todo-task');
+    const taskTip = task?.llmTip ?? '';
+
+    expect(taskTip).toContain('todoTaskListId');
+    expect(taskTip).toContain("contentType: 'text'");
+    expect(taskTip).toContain('isReminderOn: true');
+    expect(taskTip).toContain("no 'Z' or offset");
+
+    for (const field of task?.bodyFields ?? []) {
+      expect(taskTip, `create-todo-task llmTip must mention bodyFields field ${field}`).toContain(
+        field
+      );
+    }
+
+    // Variant B (T1 not yet measured): steps go through the dedicated tool
+    expect(taskTip).toContain('create-todo-checklist-item');
   });
 
   it('should generate non-void response schemas for Planner task chat read/create tools', () => {

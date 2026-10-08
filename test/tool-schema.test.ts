@@ -116,7 +116,6 @@ describe('describeToolSchema', () => {
       [
         'body',
         'categories',
-        'checklistItems',
         'dueDateTime',
         'importance',
         'isReminderOn',

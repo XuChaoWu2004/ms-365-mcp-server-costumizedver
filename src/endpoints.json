@@ -1273,10 +1273,9 @@
       "importance",
       "categories",
       "recurrence",
-      "checklistItems",
       "linkedResources"
     ],
-    "llmTip": "Creates a new task in a Microsoft To Do list. Body: { title: \"...\" }; optional dueDateTime, reminderDateTime, importance, body (notes), recurrence, categories. Requires todoTaskListId from list-todo-task-lists."
+    "llmTip": "Creates one task in a Microsoft To Do list. Requires todoTaskListId from list-todo-task-lists. Only these body fields are accepted; anything else is rejected: title (required, short); body: { contentType: 'text', content: '...' } for notes, plain text only; dueDateTime: { dateTime: 'YYYY-MM-DDT00:00:00', timeZone: '<Windows time zone name, e.g. Pacific Standard Time>' } (To Do keeps only the date, so use midnight with no 'Z' or offset); reminderDateTime: same shape with the real local reminder time, and always send isReminderOn: true with it; importance: 'low' | 'normal' | 'high'; categories: only names the user supplied; recurrence: only when the user asked for a repeating task; steps are NOT accepted here; after this call add each step with create-todo-checklist-item using the returned id; linkedResources: [{ webUrl: 'https://...', applicationName: '...', displayName: '...' }] attaches links. Never invent dates. Returns the created task including its id."
   },
   {
     "pathPattern": "/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}",
@@ -1316,7 +1315,7 @@
     "presets": ["personal", "tasks"],
     "scopes": ["Tasks.ReadWrite"],
     "bodyFields": ["displayName", "isChecked"],
-    "llmTip": "Adds one step (checklist item) to an existing To Do task. Body: { displayName: 'Step text' }. Call once per step. Requires todoTaskListId from list-todo-task-lists and todoTaskId (the id returned by create-todo-task)."
+    "llmTip": "Adds one step (checklist item) to a To Do task. Call it right after create-todo-task, once per step, in order. Body: { displayName: 'Step text' }. Requires todoTaskListId and todoTaskId (the id returned by create-todo-task)."
   },
   {
     "pathPattern": "/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/linkedResources/{linkedResource-id}",
