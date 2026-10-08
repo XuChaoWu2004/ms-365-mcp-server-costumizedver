@@ -308,6 +308,97 @@ Test login in Claude Desktop:
 
 ![Login example](https://github.com/user-attachments/assets/27f57f0e-57b8-4366-a8d1-c0bdab79900c)
 
+## Beginner's Guide: Using This Server from an LLM Client（傻瓜使用指南）
+
+面向第一次接触 MCP 的用户，按步骤跑通 Claude Desktop / Cherry Studio 等客户端。
+For first-time MCP users: a step-by-step walkthrough for Claude Desktop, Cherry Studio, and similar clients.
+
+### 它是怎么工作的 / How it works
+
+MCP（Model Context Protocol）是 AI 客户端与外部工具之间的标准协议。这个 server 是 AI 与 Microsoft 365 之间的一座桥：AI 提出请求 → 本 server 把它翻译成 Microsoft Graph API 调用 → 读写你的微软账号数据。你在客户端里注册的只是一个命令，不是图形界面程序。
+
+MCP is the standard protocol between AI clients and external tools. This server is the bridge: the AI's request → translated into Microsoft Graph API calls → your Microsoft 365 data. What you register in the client is a single command, not a GUI app.
+
+### 第 1 步：首次登录（不经过 AI）/ Step 1: Sign in once (without the AI)
+
+登录必须在命令行完成，不要把 login 交给 AI 调。
+Sign in on the command line; never let the AI call the login tool.
+
+```bash
+# Windows: use cmd /c wrapper when invoking through PowerShell
+cd E:\AISettings\MCP\ms-365-mcp-server
+node dist/index.js --login
+node dist/index.js --verify-login
+```
+
+会打开浏览器完成微软账号授权。如果你用 `--enabled-tools` 白名单，登录命令也带上**同一个**参数——登录申请的权限由启用的工具推导，这样只会申请白名单内工具需要的权限。
+A browser opens for Microsoft sign-in. If you use an `--enabled-tools` allowlist, pass the **same** pattern to `--login` — requested scopes derive from the enabled tools.
+
+### 第 2 步：在客户端里注册服务器 / Step 2: Register the server in your client
+
+Claude Desktop：Settings → Developer → Edit Config，写入：
+Claude Desktop: Settings → Developer → Edit Config:
+
+```json
+{
+  "mcpServers": {
+    "ms365": {
+      "command": "node",
+      "args": ["E:\\AISettings\\MCP\\ms-365-mcp-server\\dist\\index.js"]
+    }
+  }
+}
+```
+
+注意：JSON 里的反斜杠必须写成 `\\`。保存后重启 Claude Desktop。
+Note: backslashes in JSON must be written as `\\`. Restart Claude Desktop after saving.
+
+Cherry Studio：设置 → MCP 服务器 → 添加服务器（类型选 stdio）：
+Cherry Studio: Settings → MCP Servers → Add Server (type: stdio):
+
+- 命令 Command：`node`
+- 参数 Args：`E:\AISettings\MCP\ms-365-mcp-server\dist\index.js`（界面里直接填，不需要转义 / no escaping needed in the UI）
+- 环境变量 Environment variables：按需添加（见下方常用开关 / see common flags below）
+
+### 第 3 步：验证 / Step 3: Verify
+
+对 AI 说："用工具列出我的待办任务列表"（or ask: "list my To Do task lists"）。
+看到真实列表即成功；没有工具出现看下方故障排查。
+Seeing your real lists means it works; if no tools appear, see Troubleshooting.
+
+### 常用开关 / Common flags
+
+| 开关 Flag                             | 作用 What it does                                                                                                                                                                                                                                                       |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--enabled-tools "<regex>"`           | 只暴露匹配的工具，是安全白名单。stdio 模式下也过滤登录工具（login/logout/verify-login/list-accounts/select-account/remove-account），所以登录要用命令行 `--login`。Exposes only matching tools; in stdio mode it also filters the auth tools, so sign in via `--login`. |
+| `MS365_MCP_REQUIRE_CONFIRM=true`      | 写入类工具必须带 `confirm: true`（软闸门，AI 自己能填）。Destructive tools require `confirm: true`.                                                                                                                                                                     |
+| `MS365_MCP_EXPECTED_USERNAME=<email>` | 锁定账号，防止写进别的账号。Pins all operations to one account.                                                                                                                                                                                                         |
+| `--preset <name>` / `--org-mode`      | 按预设启用一组工具。See [Tool Presets](#tool-presets).                                                                                                                                                                                                                  |
+
+完整参数列表见 [CLI Options](#cli-options)（含 `--http`、`--cloud`、`--login` 等）。
+The full list is under [CLI Options](#cli-options).
+
+### 现成配置：只新建 To Do 任务 / A ready-made setup: create To Do tasks only
+
+只暴露"查列表 + 新建任务 + 添加步骤"三个工具，写入由客户端审批把关（步骤按任务逐条添加，所以三个工具都要在白名单里）：
+Exposes only list + create task + add step; writes are gated by client-side approval (steps are added per task, so all three tools must be in the allowlist):
+
+- 启动参数 Args：`--enabled-tools "^(list-todo-task-lists|create-todo-task|create-todo-checklist-item)$"`
+- 环境变量 Env：`MS365_MCP_REQUIRE_CONFIRM=true`、`MS365_MCP_EXPECTED_USERNAME=<你的邮箱 your email>`
+- Claude Desktop：`create-todo-task` 每次只点"允许一次"；登录类工具在设置里关掉。Approve `create-todo-task` with "allow once" each time; disable the auth tools in settings.
+- Cherry Studio：`create-todo-task` 关闭自动批准；登录类工具禁用。Keep auto-approve OFF for `create-todo-task`; disable the auth tools. Cherry 有已知审批异常 issue（Cherry has known approval issues）：[#13481](https://github.com/CherryHQ/cherry-studio/issues/13481)、[#15039](https://github.com/CherryHQ/cherry-studio/issues/15039)。
+- 实测期只写入一个手建的测试列表（如 `_AI 测试`）。While testing, write only to a dedicated test list you created manually (e.g. `_AI 测试`).
+
+### 故障排查 / Troubleshooting
+
+| 现象 Symptom                                          | 处理 What to do                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 客户端里没有任何工具 No tools in the client           | 服务器没起来：先在终端单独运行 `node dist/index.js`（能进入等待状态说明程序正常）；检查配置 JSON 的引号、逗号和 `\\`；重启客户端。Server didn't start: run `node dist/index.js` alone in a terminal first; check JSON quotes, commas and `\\`; restart the client. |
+| 调用报未登录 Auth / "not logged in" errors            | 命令行跑 `--login` 和 `--verify-login`。Run `--login` then `--verify-login` on the command line.                                                                                                                                                                   |
+| 返回 `body_fields_not_allowed`                        | 不是故障：模型填了白名单外的字段，属预期防护；让 AI 去掉该字段重试。Not a bug: the model sent a field outside the allowlist, by design; ask the AI to remove it and retry.                                                                                         |
+| 返回 `confirmation_required`                          | 确认闸门生效：让 AI 带 `confirm: true` 重试，或在客户端点批准。The confirm gate is working: ask the AI to retry with `confirm: true`, or approve in the client.                                                                                                    |
+| Cherry 审批弹窗行为异常 Cherry approval behaves oddly | 见上方 Cherry issue 链接；先更新 Cherry 再实测。See the Cherry issues above; update Cherry and retest.                                                                                                                                                             |
+
 ## Examples
 
 ![Image](https://github.com/user-attachments/assets/ed275100-72e8-4924-bcf2-cd8e1b4c6f3a)
