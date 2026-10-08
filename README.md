@@ -1,6 +1,6 @@
 # ms-365-mcp-server（To Do 白名单版）
 
-本仓库 fork 自 [Softeria/ms-365-mcp-server](https://github.com/Softeria/ms-365-mcp-server)，基于上游提交 `c471971`。
+本仓库 fork 自 [Softeria/ms-365-mcp-server](https://github.com/Softeria/ms-365-mcp-server)，改动基于上游 `c471971` 开发，已合并上游至 `a73c427`（2026-10-08）。
 完整功能、全部参数和原始文档请看上游 README；这里只写**改动**和**用法**。
 
 主要场景：在 Claude 桌面版等客户端里，把待办丢给 AI，由它整理后写入 Microsoft To Do，每次写入由你人工批准。
