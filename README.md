@@ -30,8 +30,8 @@
 需要 Node.js 20 或更新版本。
 
 ```bash
-git clone https://github.com/XuChaoWu2004/ms-365-mcp-server.git
-cd ms-365-mcp-server
+git clone https://github.com/XuChaoWu2004/ms-365-mcp-server-costumizedver.git
+cd ms-365-mcp-server-costumizedver
 npm install
 npm run generate
 npm run build
