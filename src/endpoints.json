@@ -1298,6 +1298,14 @@
     "llmTip": "Links a resource to a To Do task. Body: { webUrl: 'https://...', applicationName: 'Mail', displayName: 'Related email', externalId: 'optional-id' }. Use to link tasks to emails, files, or web pages for context."
   },
   {
+    "pathPattern": "/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/checklistItems",
+    "method": "post",
+    "toolName": "create-todo-checklist-item",
+    "presets": ["personal", "tasks"],
+    "scopes": ["Tasks.ReadWrite"],
+    "llmTip": "Adds one step (checklist item) to an existing To Do task. Body: { displayName: 'Step text' }. Call once per step. Requires todoTaskListId from list-todo-task-lists and todoTaskId (the id returned by create-todo-task)."
+  },
+  {
     "pathPattern": "/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/linkedResources/{linkedResource-id}",
     "method": "delete",
     "toolName": "delete-todo-linked-resource",

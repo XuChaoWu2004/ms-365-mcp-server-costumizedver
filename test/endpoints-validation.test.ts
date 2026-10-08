@@ -113,6 +113,16 @@ describe('endpoints.json validation', () => {
     }
   });
 
+  it('declares create-todo-checklist-item as a Tasks.ReadWrite POST on checklistItems', () => {
+    const e = endpoints.find((x) => x.toolName === 'create-todo-checklist-item');
+    expect(e?.method).toBe('post');
+    expect(e?.pathPattern).toBe('/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/checklistItems');
+    expect(e?.scopes).toEqual(['Tasks.ReadWrite']);
+    const gen = api.endpoints.find((x) => x.alias === 'create-todo-checklist-item');
+    expect(gen?.path).toBe('/me/todo/lists/:todoTaskListId/tasks/:todoTaskId/checklistItems');
+    expect(gen?.parameters?.some((p) => p.type === 'Body')).toBe(true);
+  });
+
   it('should generate non-void response schemas for Planner task chat read/create tools', () => {
     const plannerChatTools = ['list-planner-task-messages', 'create-planner-task-message'];
 
