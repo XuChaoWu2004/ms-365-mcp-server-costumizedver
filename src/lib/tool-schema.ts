@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { queryParameterSchema } from './query-parameter-schema.js';
+import { pickBodyFields } from './body-fields.js';
 import type { api } from '../generated/client.js';
 import { isDestructiveOperation, type DestructiveCheckConfig } from './destructive-ops.js';
 import {
@@ -29,6 +30,7 @@ export interface ToolSchemaConfig extends DestructiveCheckConfig {
   supportsTimezone?: boolean;
   supportsExpandExtendedProperties?: boolean;
   acceptType?: string;
+  bodyFields?: string[];
 }
 
 /**
@@ -88,7 +90,9 @@ export function describeToolSchema(
     const effectiveSchema =
       p.type === 'Query'
         ? queryParameterSchema(tool.alias, p.name, p.schema as z.ZodTypeAny)
-        : (p.schema as z.ZodTypeAny);
+        : p.type === 'Body' && config?.bodyFields
+          ? pickBodyFields(p.schema as z.ZodTypeAny, config.bodyFields)
+          : (p.schema as z.ZodTypeAny);
     if (!effectiveSchema) return [];
     const { inner, optional } = unwrapOptional(effectiveSchema);
     const isPath = p.type === 'Path';

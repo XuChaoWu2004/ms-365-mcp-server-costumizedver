@@ -23,6 +23,7 @@ import {
   TicketStoreFullError,
 } from './lib/attachment-tickets.js';
 import { buildBM25Index, scoreQuery, tokenize, type BM25Index } from './lib/bm25.js';
+import { pickBodyFields, findDisallowedBodyFields } from './lib/body-fields.js';
 import { isDestructiveOperation } from './lib/destructive-ops.js';
 import {
   CONFIRM_PARAM_DESCRIPTION,
@@ -100,6 +101,9 @@ interface EndpointConfig {
   // to synthesize a typed requestBody (instead of a generic object), so the generated client
   // exposes a validated `body` param. Ignored for endpoints already present in the spec.
   requestBodySchema?: Record<string, unknown>;
+  // Request-body fields the model may send, in order to shrink the registered
+  // body schema and reject anything else at execution (see lib/body-fields.ts)
+  bodyFields?: string[];
 }
 
 const endpointsData = JSON.parse(
@@ -2238,6 +2242,33 @@ async function executeGraphTool(
       }
     }
 
+    // Defense-in-depth: an endpoint's bodyFields allowlist is enforced here, after
+    // the #569 flattened-field merge above, so stray top-level params can't smuggle
+    // read-only or attachment fields into the request body
+    if (config?.bodyFields) {
+      const disallowed = findDisallowedBodyFields(body, config.bodyFields);
+      if (disallowed.length > 0) {
+        logger.warn(
+          `Refusing ${tool.alias}: body contains fields outside the allowlist: ${disallowed.join(', ')}`
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'body_fields_not_allowed',
+                tool: tool.alias,
+                disallowed,
+                allowed: config.bodyFields,
+                message: 'Remove the disallowed fields and call again.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
     // Defense-in-depth: the calendar delta tools don't support $top (see
     // TOP_UNSUPPORTED_DELTA_TOOLS). Their user-facing schema strips top/$top, so
     // freshly-connected clients can't send it. Cached/stale clients (and ad-hoc
@@ -2771,6 +2802,22 @@ export function registerGraphTools(
       continue;
     }
 
+    // Endpoints with a bodyFields allowlist advertise only those fields; the
+    // execution path rejects everything else. Pick here (outside the parameter
+    // loop) so a misconfigured allowlist — a field missing from the generated
+    // body schema — skips just this tool instead of aborting registration.
+    let pickedBody: z.ZodTypeAny | undefined;
+    const bodyParam = tool.parameters?.find((p) => p.type === 'Body');
+    if (endpointConfig?.bodyFields && bodyParam?.schema) {
+      try {
+        pickedBody = pickBodyFields(bodyParam.schema as z.ZodTypeAny, endpointConfig.bodyFields);
+      } catch (err) {
+        logger.error(`Failed to register tool ${tool.alias}: ${(err as Error).message}`);
+        failedCount++;
+        continue;
+      }
+    }
+
     const paramSchema: Record<string, z.ZodTypeAny> = {};
     if (tool.parameters && tool.parameters.length > 0) {
       for (const param of tool.parameters) {
@@ -2782,7 +2829,7 @@ export function registerGraphTools(
         // Lenient Body validation, or the SDK strips a flattened body value to {} (#569)
         paramSchema[param.name] =
           param.type === 'Body' && param.schema
-            ? lenientBodySchema(param.schema as z.ZodTypeAny)
+            ? lenientBodySchema((pickedBody ?? param.schema) as z.ZodTypeAny)
             : param.schema || z.any();
       }
     }

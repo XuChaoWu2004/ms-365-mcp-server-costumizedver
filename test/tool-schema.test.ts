@@ -107,6 +107,26 @@ describe('describeToolSchema', () => {
     const s = describeToolSchema(entry.tool, entry.config);
     expect(s.parameters.find((p) => p.name === 'confirm')).toBeUndefined();
   });
+
+  it('describeToolSchema honours bodyFields for create-todo-task', () => {
+    const bodyParam = schemaFor('create-todo-task').parameters.find((p) => p.name === 'body');
+    expect(bodyParam).toBeDefined();
+    const properties = (bodyParam!.schema as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(properties).sort()).toEqual(
+      [
+        'body',
+        'categories',
+        'checklistItems',
+        'dueDateTime',
+        'importance',
+        'isReminderOn',
+        'linkedResources',
+        'recurrence',
+        'reminderDateTime',
+        'title',
+      ].sort()
+    );
+  });
 });
 
 /**

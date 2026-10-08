@@ -1264,6 +1264,18 @@
     "toolName": "create-todo-task",
     "presets": ["personal", "tasks"],
     "scopes": ["Tasks.ReadWrite"],
+    "bodyFields": [
+      "title",
+      "body",
+      "dueDateTime",
+      "reminderDateTime",
+      "isReminderOn",
+      "importance",
+      "categories",
+      "recurrence",
+      "checklistItems",
+      "linkedResources"
+    ],
     "llmTip": "Creates a new task in a Microsoft To Do list. Body: { title: \"...\" }; optional dueDateTime, reminderDateTime, importance, body (notes), recurrence, categories. Requires todoTaskListId from list-todo-task-lists."
   },
   {
@@ -1303,6 +1315,7 @@
     "toolName": "create-todo-checklist-item",
     "presets": ["personal", "tasks"],
     "scopes": ["Tasks.ReadWrite"],
+    "bodyFields": ["displayName", "isChecked"],
     "llmTip": "Adds one step (checklist item) to an existing To Do task. Body: { displayName: 'Step text' }. Call once per step. Requires todoTaskListId from list-todo-task-lists and todoTaskId (the id returned by create-todo-task)."
   },
   {

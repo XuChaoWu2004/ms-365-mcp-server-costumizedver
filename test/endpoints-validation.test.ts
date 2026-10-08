@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { z } from 'zod';
 
 // Node 18 lacks the File global that the generated Zod schemas reference.
 // Must be set before the dynamic import below.
@@ -22,6 +23,7 @@ interface Endpoint {
   workScopes?: string[] | string[][];
   returnDownloadUrl?: boolean;
   llmTip?: string;
+  bodyFields?: string[];
 }
 
 const endpoints: Endpoint[] = JSON.parse(
@@ -116,11 +118,62 @@ describe('endpoints.json validation', () => {
   it('declares create-todo-checklist-item as a Tasks.ReadWrite POST on checklistItems', () => {
     const e = endpoints.find((x) => x.toolName === 'create-todo-checklist-item');
     expect(e?.method).toBe('post');
-    expect(e?.pathPattern).toBe('/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/checklistItems');
+    expect(e?.pathPattern).toBe(
+      '/me/todo/lists/{todoTaskList-id}/tasks/{todoTask-id}/checklistItems'
+    );
     expect(e?.scopes).toEqual(['Tasks.ReadWrite']);
     const gen = api.endpoints.find((x) => x.alias === 'create-todo-checklist-item');
     expect(gen?.path).toBe('/me/todo/lists/:todoTaskListId/tasks/:todoTaskId/checklistItems');
     expect(gen?.parameters?.some((p) => p.type === 'Body')).toBe(true);
+  });
+
+  it('every bodyFields entry names a field of the generated body schema', () => {
+    const generated = [...api.endpoints, ...betaApi.endpoints];
+    const mismatches: string[] = [];
+
+    for (const e of endpoints) {
+      if (!e.bodyFields) continue;
+      const gen = generated.find((x) => x.alias === e.toolName);
+      const bodyParam = gen?.parameters?.find((p) => p.type === 'Body');
+      if (!bodyParam?.schema) {
+        mismatches.push(`${e.toolName}: no generated Body parameter`);
+        continue;
+      }
+      const shape = (bodyParam.schema as z.AnyZodObject).shape;
+      for (const field of e.bodyFields) {
+        if (!Object.prototype.hasOwnProperty.call(shape, field)) {
+          mismatches.push(`${e.toolName}: ${field}`);
+        }
+      }
+    }
+
+    if (mismatches.length > 0) {
+      expect.fail(
+        `bodyFields entries missing from the generated body schema. ` +
+          `Run npm run generate, or fix the entry.\n${mismatches.join('\n')}`
+      );
+    }
+  });
+
+  it('create-todo-task never allows read-only or attachment fields', () => {
+    const e = endpoints.find((x) => x.toolName === 'create-todo-task');
+    expect(e?.bodyFields).toBeDefined();
+    for (const forbidden of [
+      'id',
+      'createdDateTime',
+      'lastModifiedDateTime',
+      'bodyLastModifiedDateTime',
+      'attachments',
+      'attachmentSessions',
+      'extensions',
+      'status',
+      'completedDateTime',
+    ]) {
+      expect(
+        e?.bodyFields,
+        `${forbidden} must not be in create-todo-task bodyFields`
+      ).not.toContain(forbidden);
+    }
   });
 
   it('should generate non-void response schemas for Planner task chat read/create tools', () => {
