@@ -49,6 +49,17 @@ export function isLoopbackHost(host: string | undefined): boolean {
   return bare === 'localhost' || bare === '127.0.0.1' || bare === '::1';
 }
 
+/**
+ * The --enabled-tools predicate for the six auth tools. Applied in stdio
+ * mode only: the plan scoped the filter to stdio, and an HTTP deployment
+ * that filters out `login` cannot get back in.
+ */
+export function authToolFilter(options: CommandOptions): (toolName: string) => boolean {
+  const regex =
+    !options.http && options.enabledTools ? new RegExp(options.enabledTools, 'i') : undefined;
+  return (toolName) => !regex || regex.test(toolName);
+}
+
 export function loopbackOriginValidation(): (
   req: Request,
   res: Response,
@@ -323,14 +334,7 @@ class MicrosoftGraphServer {
 
     const shouldRegisterAuthTools = !this.options.http || this.options.enableAuthTools;
     if (shouldRegisterAuthTools) {
-      const enabledToolsRegex = this.options.enabledTools
-        ? new RegExp(this.options.enabledTools, 'i')
-        : undefined;
-      registerAuthTools(
-        server,
-        this.authManager,
-        (toolName) => !enabledToolsRegex || enabledToolsRegex.test(toolName)
-      );
+      registerAuthTools(server, this.authManager, authToolFilter(this.options));
     }
 
     const registrationOptions = {

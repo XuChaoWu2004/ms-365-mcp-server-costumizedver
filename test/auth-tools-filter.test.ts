@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type AuthManager from '../src/auth.js';
 import { registerAuthTools } from '../src/auth-tools.js';
+import { authToolFilter } from '../src/server.js';
 
 type RegisterAuthTools = (
   server: McpServer,
@@ -50,5 +51,30 @@ describe('registerAuthTools filtering', () => {
     expect(loginCall).toBeDefined();
     expect(loginCall![1]).toBe('Authenticate with Microsoft account');
     expect(typeof loginCall![3]).toBe('function');
+  });
+});
+
+describe('authToolFilter (server.ts wiring)', () => {
+  it('filters auth tools by --enabled-tools in stdio mode', () => {
+    const filter = authToolFilter({ enabledTools: '^(list-todo-task-lists|create-todo-task)$' });
+    expect(filter('login')).toBe(false);
+    expect(filter('create-todo-task')).toBe(true);
+  });
+
+  it('keeps all auth tools when no enabledTools is given', () => {
+    const filter = authToolFilter({});
+    expect(filter('login')).toBe(true);
+  });
+
+  it('never filters auth tools in HTTP mode, even with --enabled-tools', () => {
+    // The plan scoped the filter to stdio; an HTTP deployment that filters out
+    // `login` has no way back in, so --enable-auth-tools must register all six.
+    const filter = authToolFilter({
+      http: true,
+      enableAuthTools: true,
+      enabledTools: '^(list-todo-task-lists)$',
+    });
+    expect(filter('login')).toBe(true);
+    expect(filter('create-todo-task')).toBe(true);
   });
 });
