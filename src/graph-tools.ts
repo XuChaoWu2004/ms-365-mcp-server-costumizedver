@@ -17,9 +17,11 @@ import { api as betaApi } from './generated/client-beta.js';
 import { api } from './generated/client.js';
 import GraphClient from './graph-client.js';
 import { getAttachmentMinting } from './lib/attachment-minting.js';
+import { MAX_UPLOAD_BYTES } from './attachment-route.js';
 import {
   buildAttachmentUrl,
   isPlainGraphPath,
+  isUnalteredGraphPath,
   TicketStoreFullError,
 } from './lib/attachment-tickets.js';
 import { buildBM25Index, scoreQuery, tokenize, type BM25Index } from './lib/bm25.js';
@@ -1068,6 +1070,90 @@ async function checkAccountParamInBearerMode(
  * the refusal it would have given before -- the tool's behaviour is unchanged
  * for anyone not running with `--enable-attachment-urls`.
  */
+const UPLOAD_TARGET = /^(\/me|\/users\/[^/]+)\/(messages|events)\/[^/]+\/attachments$/;
+const UPLOAD_CONTENT_TYPE = /^[\w.+-]+\/[\w.+-]+$/;
+
+function uploadError(message: string): CallToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify({ error: message }) }], isError: true };
+}
+
+/**
+ * Mint an upload ticket for `target`, the `/attachments` collection of a draft
+ * message or an event, redeemed by one PUT of the file bytes. Same identity
+ * rules as mintDownloadUrl: when Graph identity came from the request, the
+ * ticket keeps that token and the upload is attached as that caller.
+ */
+async function mintUploadUrl(
+  target: string,
+  name: string,
+  contentType: string,
+  accountParam: string | undefined,
+  authManager: AuthManager | undefined
+): Promise<CallToolResult> {
+  const minting = getAttachmentMinting();
+  if (!minting) {
+    return uploadError(
+      'This server is not running with --enable-attachment-urls, so no upload URL can be minted. Attach small files with add-mail-attachment (base64 contentBytes).'
+    );
+  }
+  if (!UPLOAD_TARGET.test(target) || !isPlainGraphPath(target)) {
+    return uploadError(
+      'target must be the attachments collection of a draft message or an event: /me/messages/{message-id}/attachments or /me/events/{event-id}/attachments.'
+    );
+  }
+  const cleanName = Array.from(name.trim())
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return code > 0x1f && code !== 0x7f;
+    })
+    .join('')
+    .slice(0, 255);
+  if (!cleanName) return uploadError('name is required.');
+  if (!UPLOAD_CONTENT_TYPE.test(contentType)) {
+    return uploadError('contentType must be a MIME type such as application/pdf.');
+  }
+
+  const identityFromRequest = Boolean(authManager?.isOAuthModeEnabled() || getRequestTokens());
+  const requestToken = identityFromRequest
+    ? (getRequestTokens()?.accessToken ??
+      (await authManager?.getToken().catch(() => null)) ??
+      undefined)
+    : undefined;
+  if (identityFromRequest && !requestToken) {
+    return uploadError(
+      'No Graph access token is available for this request, so no upload URL can be minted.'
+    );
+  }
+  const accountModeError = await checkAccountParamInBearerMode(accountParam, authManager);
+  if (accountModeError) return uploadError(accountModeError);
+
+  let ticket: { id: string; expiresAtMs: number };
+  try {
+    const upload = { name: cleanName, contentType };
+    ticket = requestToken
+      ? minting.store.mintUploadWithToken(target, requestToken, upload)
+      : minting.store.mintUpload(target, accountParam, upload);
+  } catch (error) {
+    if (error instanceof TicketStoreFullError) return uploadError(error.message);
+    throw error;
+  }
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          uploadUrl: buildAttachmentUrl(minting.config, ticket.id),
+          method: 'PUT',
+          expiresAt: new Date(ticket.expiresAtMs).toISOString(),
+          singleUse: true,
+          maxBytes: MAX_UPLOAD_BYTES,
+          note: 'PUT the raw file bytes with a Content-Length (e.g. curl -T <file> "<uploadUrl>"). Served by this server; valid for one upload until it expires.',
+        }),
+      },
+    ],
+  };
+}
+
 async function mintDownloadUrl(
   target: string,
   accountParam: string | undefined,
@@ -1174,6 +1260,65 @@ async function mintDownloadUrl(
 
 export const UTILITY_TOOLS: readonly UtilityTool[] = [
   {
+    name: 'get-upload-url',
+    method: 'PUT',
+    path: 'tool:get-upload-url',
+    searchKeywords:
+      'upload attachment attach file draft email attach file event large attachment send file out-of-band upload url',
+    description:
+      'Mint a short-lived, single-use URL that this server serves for uploading a file as an attachment to a draft message or an event, so the bytes go straight from the caller to Microsoft Graph instead of passing as base64 through the agent context. target is the attachments collection of the item: /me/messages/{message-id}/attachments (a draft; create it first) or /me/events/{event-id}/attachments. PUT the raw file bytes to the returned uploadUrl with a Content-Length (e.g. curl -T file "<uploadUrl>"); the response confirms the attachment. Files under 3 MB are attached directly, larger ones (up to 150 MB) through a Graph upload session. Requires --enable-attachment-urls. Returns { uploadUrl, method, expiresAt, singleUse, maxBytes }.',
+    readOnlyHint: false,
+    openWorldHint: true,
+    buildSchema: (ctx) => {
+      const schema: Record<string, z.ZodTypeAny> = {
+        target: z
+          .string()
+          .describe(
+            'Attachments collection of a draft message or an event, e.g. /me/messages/{message-id}/attachments or /me/events/{event-id}/attachments.'
+          ),
+        name: z
+          .string()
+          .describe('Attachment file name as the recipient will see it, e.g. report.pdf'),
+        contentType: z
+          .string()
+          .optional()
+          .describe(
+            'MIME type of the file, e.g. application/pdf. Defaults to application/octet-stream.'
+          ),
+      };
+      if (ctx.multiAccount) {
+        schema['account'] = z
+          .string()
+          .optional()
+          .describe(
+            'Account to use when multiple Microsoft accounts are configured. Required when multiple accounts exist (see list-accounts).'
+          );
+      }
+      return schema;
+    },
+    execute: async (params, { authManager }) => {
+      const target = params.target;
+      const name = params.name;
+      if (typeof target !== 'string' || target.length === 0) {
+        return uploadError('target is required and must be a non-empty string.');
+      }
+      if (typeof name !== 'string' || name.length === 0) {
+        return uploadError('name is required and must be a non-empty string.');
+      }
+      const contentType =
+        typeof params.contentType === 'string' && params.contentType.length > 0
+          ? params.contentType
+          : 'application/octet-stream';
+      return mintUploadUrl(
+        target,
+        name,
+        contentType,
+        params.account as string | undefined,
+        authManager
+      );
+    },
+  },
+  {
     name: 'parse-teams-url',
     method: 'POST',
     path: 'tool:parse-teams-url',
@@ -1263,6 +1408,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           isError: true,
         };
       }
+      const alteredTarget = unalteredTargetError(target);
+      if (alteredTarget) return alteredTarget;
       const restrictedTarget = userProfilePassthroughError(target, userFields);
       if (restrictedTarget) return restrictedTarget;
       try {
@@ -1383,6 +1530,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           isError: true,
         };
       }
+      const alteredTarget = unalteredTargetError(target);
+      if (alteredTarget) return alteredTarget;
       const restrictedTarget = userProfilePassthroughError(target, userFields);
       if (restrictedTarget) return restrictedTarget;
       if (!path.isAbsolute(outputPath)) {
@@ -1527,6 +1676,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           isError: true,
         };
       }
+      const alteredTarget = unalteredTargetError(target);
+      if (alteredTarget) return alteredTarget;
       const restrictedTarget = userProfilePassthroughError(target, userFields);
       if (restrictedTarget) return restrictedTarget;
       // Normalize: separate any query string and strip trailing slashes so the /content and
@@ -1905,6 +2056,45 @@ function describeParamsForLog(params: Record<string, unknown>): string {
   }
 }
 
+// A quote inside an OData string literal is doubled, e.g. TimeZoneStandard='{TimeZoneStandard}'
+function escapeIfStringLiteral(template: string, names: string[], value: unknown): string {
+  const quoted = names.some((n) => template.includes(`'{${n}}'`) || template.includes(`':${n}'`));
+  return quoted ? String(value).replace(/'/g, "''") : String(value);
+}
+
+// A skipEncoding value goes in raw, so it must not bring path segments of its own. The one
+// that is a whole trailing segment (/sites/{site-id}:/{path}) is a path already, and there
+// it is the ":" ending path addressing that would start a new one.
+function rawValueAddsSegments(template: string, names: string[], value: string): boolean {
+  const isTail = names.some((n) => template.endsWith(`/{${n}}`) || template.endsWith(`/:${n}`));
+  return isTail ? value.includes(':') : value.includes('/');
+}
+
+function invalidPathParameter(message: string) {
+  return {
+    content: [
+      { type: 'text' as const, text: JSON.stringify({ error: 'invalid_path_parameter', message }) },
+    ],
+    isError: true,
+  };
+}
+
+// The download tools take a Graph path as given, and the checks on it read that string
+function unalteredTargetError(target: string) {
+  if (isUnalteredGraphPath(target.split('?')[0])) return undefined;
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({
+          error: 'target must not contain "." or ".." segments, a fragment or a backslash.',
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
 async function executeGraphTool(
   tool: (typeof api.endpoints)[0],
   config: EndpointConfig | undefined,
@@ -2084,17 +2274,27 @@ async function executeGraphTool(
             // and commonly appears in Microsoft Graph base64-encoded resource IDs.
             // Without this, IDs like "AAMk...AAA=" become "AAMk...AAA%3D" causing 404 errors.
             // First we encode, then unencode. Crazy, check out https://github.com/Softeria/ms-365-mcp-server/issues/245
+            const names = [paramName, camelCaseParamName];
+            if (shouldSkipEncoding && rawValueAddsSegments(tool.path, names, `${paramValue}`)) {
+              return invalidPathParameter(
+                `'${paramName}' cannot add path segments to this endpoint: no "/" in a value, and no ":" in a site path.`
+              );
+            }
             const encodedValue = shouldSkipEncoding
               ? (paramValue as string)
-              : encodeURIComponent(paramValue as string).replace(/%3D/g, '=');
+              : encodeURIComponent(escapeIfStringLiteral(tool.path, names, paramValue)).replace(
+                  /%3D/g,
+                  '='
+                );
 
             // Replace both the original param name and the camelCase variant
             // to handle {message-id} (endpoints.json) and :messageId (generated client) formats
+            // A function, so "$`" and "$'" in a raw value are not replacement patterns
             path = path
-              .replace(`{${paramName}}`, encodedValue)
-              .replace(`:${paramName}`, encodedValue)
-              .replace(`{${camelCaseParamName}}`, encodedValue)
-              .replace(`:${camelCaseParamName}`, encodedValue);
+              .replace(`{${paramName}}`, () => encodedValue)
+              .replace(`:${paramName}`, () => encodedValue)
+              .replace(`{${camelCaseParamName}}`, () => encodedValue)
+              .replace(`:${camelCaseParamName}`, () => encodedValue);
             break;
           }
 
@@ -2141,12 +2341,14 @@ async function executeGraphTool(
       ) {
         // Fallback: path param not declared in tool.parameters (generated client omits them).
         // Replace placeholder directly so the URL is valid.
-        const encodedValue = encodeURIComponent(paramValue as string).replace(/%3D/g, '=');
+        const encodedValue = encodeURIComponent(
+          escapeIfStringLiteral(tool.path, [paramName, camelCaseParamName], paramValue)
+        ).replace(/%3D/g, '=');
         path = path
-          .replace(`{${paramName}}`, encodedValue)
-          .replace(`:${paramName}`, encodedValue)
-          .replace(`{${camelCaseParamName}}`, encodedValue)
-          .replace(`:${camelCaseParamName}`, encodedValue);
+          .replace(`{${paramName}}`, () => encodedValue)
+          .replace(`:${paramName}`, () => encodedValue)
+          .replace(`{${camelCaseParamName}}`, () => encodedValue)
+          .replace(`:${camelCaseParamName}`, () => encodedValue);
         logger.info(`Path param fallback: replaced :${camelCaseParamName} with encoded value`);
       } else if (paramName.toLowerCase() === 'accept' && config?.acceptType) {
         // The synthetic Accept param added for acceptType endpoints. It has no entry in
@@ -2174,6 +2376,14 @@ async function executeGraphTool(
       } else {
         logger.warn(`Dropping unrecognized parameter '${paramName}' for tool ${tool.alias}`);
       }
+    }
+
+    // encodeURIComponent leaves "." alone and skipEncoding values go in raw, so a path
+    // parameter can still be a dot segment or carry its own "?" or "#" (GHSA-42wc-j69p-jppq)
+    if (!isUnalteredGraphPath(path)) {
+      return invalidPathParameter(
+        'A path parameter would send this request to a different endpoint. Path parameters cannot be "." or "..", or contain "/../", "?", "#" or a backslash. Percent-encode "?" and "#" that are part of a name.'
+      );
     }
 
     // The client passed the nested itemBody's own fields as the whole request body - move

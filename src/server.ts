@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isIP, isIPv6 } from 'node:net';
-import { createAttachmentHandler } from './attachment-route.js';
+import { createAttachmentHandler, createAttachmentUploadHandler } from './attachment-route.js';
 import { registerAuthTools } from './auth-tools.js';
 import AuthManager, {
   buildScopesFromEndpoints,
@@ -865,11 +865,19 @@ class MicrosoftGraphServer {
         //     admin has pre-consented every scope).
         const explicitAllowedScopes = parseAllowedScopes(this.options.allowedScopes);
         const clientScope = microsoftAuthUrl.searchParams.get('scope');
-        const baseScopes =
-          explicitAllowedScopes !== undefined
+        const clientScopes = (clientScope ?? '').split(/\s+/).filter(Boolean);
+        // Under --obo the token must be for this app, not Graph, or the OBO
+        // exchange cannot use it. So Graph scopes are never derived here, and
+        // the relay scope is added if the client left it out. --allowed-scopes
+        // still narrows the tool surface, nothing more (#697).
+        const baseScopes = this.options.obo
+          ? clientScopes.some((scope) => scope.endsWith('/access_as_user'))
+            ? clientScopes
+            : [`${clientId}/access_as_user`, ...clientScopes]
+          : explicitAllowedScopes !== undefined
             ? resolveAuthScopes(this.options)
             : clientScope
-              ? clientScope.split(/\s+/).filter(Boolean)
+              ? clientScopes
               : buildScopesFromEndpoints(
                   this.options.orgMode,
                   this.options.enabledTools,
@@ -1185,14 +1193,15 @@ class MicrosoftGraphServer {
             })
           );
         }
-        attachmentApp.get(
-          ATTACHMENT_ROUTE,
-          createAttachmentHandler({
-            store: ticketStore,
-            getGraphClient: () => this.graphClient,
-            authManager: this.authManager,
-          })
-        );
+        const attachmentDeps = {
+          store: ticketStore,
+          getGraphClient: () => this.graphClient,
+          authManager: this.authManager,
+        };
+        attachmentApp.get(ATTACHMENT_ROUTE, createAttachmentHandler(attachmentDeps));
+        // Same route, same ticket store: a PUT redeems an upload ticket minted by
+        // get-upload-url and attaches the body to the ticket's message or event.
+        attachmentApp.put(ATTACHMENT_ROUTE, createAttachmentUploadHandler(attachmentDeps));
         logger.info(
           `  - Attachment URLs: ${attachmentConfig.base}${ATTACHMENT_ROUTE} ` +
             `(ttl ${attachmentConfig.ttlSeconds}s, key id ${attachmentConfig.keyId})`
