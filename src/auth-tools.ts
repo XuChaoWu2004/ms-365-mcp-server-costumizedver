@@ -4,7 +4,25 @@ import AuthManager from './auth.js';
 import logger from './logger.js';
 import { getRequestTokens } from './request-context.js';
 
-export function registerAuthTools(server: McpServer, authManager: AuthManager): void {
+// Wraps McpServer.tool so the six auth tools below are only registered when
+// isToolEnabled says so. McpServer.tool has many overloads, hence the loose casts.
+function filterToolRegistration(
+  server: McpServer,
+  isToolEnabled: (toolName: string) => boolean
+): Pick<McpServer, 'tool'> {
+  const tool = (name: string, ...rest: unknown[]) =>
+    isToolEnabled(name)
+      ? (server.tool as (...args: unknown[]) => unknown).call(server, name, ...rest)
+      : undefined;
+  return { tool: tool as McpServer['tool'] };
+}
+
+export function registerAuthTools(
+  mcpServer: McpServer,
+  authManager: AuthManager,
+  isToolEnabled: (toolName: string) => boolean = () => true
+): void {
+  const server = filterToolRegistration(mcpServer, isToolEnabled);
   server.tool(
     'login',
     'Authenticate with Microsoft account',

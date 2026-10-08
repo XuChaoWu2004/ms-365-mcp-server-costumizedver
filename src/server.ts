@@ -323,7 +323,14 @@ class MicrosoftGraphServer {
 
     const shouldRegisterAuthTools = !this.options.http || this.options.enableAuthTools;
     if (shouldRegisterAuthTools) {
-      registerAuthTools(server, this.authManager);
+      const enabledToolsRegex = this.options.enabledTools
+        ? new RegExp(this.options.enabledTools, 'i')
+        : undefined;
+      registerAuthTools(
+        server,
+        this.authManager,
+        (toolName) => !enabledToolsRegex || enabledToolsRegex.test(toolName)
+      );
     }
 
     const registrationOptions = {

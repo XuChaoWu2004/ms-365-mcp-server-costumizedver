@@ -706,7 +706,7 @@ When running as an MCP server, the following options can be used:
                   interface and so isolates nothing — set this to make the split real
                   (requires --attachment-port; see "Splitting the attachment listener")
 --no-dynamic-registration Disable OAuth Dynamic Client Registration (enabled by default in HTTP mode)
---enabled-tools <pattern> Filter tools using regex pattern (e.g., "excel|contact" to enable Excel and Contact tools)
+--enabled-tools <pattern> Filter tools using regex pattern (e.g., "excel|contact" to enable Excel and Contact tools). In stdio mode the pattern also filters the auth tools (login, logout, verify-login, list-accounts, select-account, remove-account), including when it comes from --preset or ENABLED_TOOLS; match them in the pattern or sign in with --login.
 --preset <names>  Use preset tool categories (comma-separated). See "Tool Presets" section above
 --list-presets    List all available presets and exit
 --toon            (experimental) Enable TOON output format for 30-60% token reduction
